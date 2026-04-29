@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fridge Friend — Live Monitor</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;600&display=swap" rel="stylesheet" />
+<style>
+  /* ── TOKENS ─────────────────────────────────────────── */
+  :root {
+    --bg:        #0b0f14;
+    --surface:   #111720;
+    --border:    #1e2a38;
+    --text:      #c8d8e8;
+    --muted:     #4a6070;
+    --ice:       #7dd3fc;
+    --ice-dim:   #1a3a52;
+    --green:     #22c55e;
+    --green-dim: #052e16;
+    --red:       #ef4444;
+    --red-dim:   #2d0a0a;
+    --amber:     #f59e0b;
+    --mono:      'Space Mono', monospace;
+    --sans:      'DM Sans', sans-serif;
+    --radius:    12px;
+  }
+
+  /* ── RESET / BASE ───────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    gap: 0;
+  }
+
+  /* ── GRID NOISE TEXTURE ─────────────────────────────── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(125,211,252,.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(125,211,252,.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  header {
+    position: relative; z-index: 1;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .logo {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .logo-icon { font-size: 28px; }
+  .logo-text { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--ice); letter-spacing: 2px; text-transform: uppercase; }
+  .logo-sub  { font-size: 11px; color: var(--muted); letter-spacing: 1px; margin-top: 2px; }
+
+  #connection-pill {
+    display: flex; align-items: center; gap: 7px;
+    padding: 6px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-family: var(--mono); font-size: 11px;
+    color: var(--muted);
+    transition: all .3s;
+  }
+  #connection-pill.connected { border-color: var(--green); color: var(--green); }
+  #connection-pill.error     { border-color: var(--red);   color: var(--red); }
+  .pill-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: currentColor;
+  }
+  #connection-pill.connected .pill-dot { animation: pulse 2s infinite; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: .3; }
+  }
+
+  /* ── MAIN LAYOUT ────────────────────────────────────── */
+  main {
+    position: relative; z-index: 1;
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    grid-template-rows: auto 1fr;
+    gap: 20px;
+    padding: 24px 32px;
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  /* ── SECTION LABEL ──────────────────────────────────── */
+  .section-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 2px;
+    color: var(--muted); text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  /* ── LED STATUS HERO ────────────────────────────────── */
+  .status-hero {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; gap: 28px;
+    padding: 28px 32px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    position: relative; overflow: hidden;
+  }
+  .status-hero::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at 40% 50%, var(--glow-color, transparent) 0%, transparent 60%);
+    opacity: .12;
+    transition: background .5s;
+    pointer-events: none;
+  }
+  .status-hero.state-green { --glow-color: var(--green); border-color: #166534; }
+  .status-hero.state-red   { --glow-color: var(--red);   border-color: #7f1d1d; }
+  .status-hero.state-blink { --glow-color: var(--amber);  border-color: #78350f; }
+
+  /* Physical LED orb */
+  .led-orb {
+    flex-shrink: 0;
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: #1a2030;
+    border: 3px solid var(--border);
+    box-shadow:
+      inset 0 2px 4px rgba(0,0,0,.5),
+      inset 0 -1px 2px rgba(255,255,255,.04);
+    transition: background .4s, box-shadow .4s, border-color .4s;
+    position: relative;
+  }
+  .led-orb.green {
+    background: var(--green);
+    border-color: #4ade80;
+    box-shadow: 0 0 24px var(--green), 0 0 60px rgba(34,197,94,.4),
+      inset 0 1px 3px rgba(255,255,255,.3);
+  }
+  .led-orb.red {
+    background: var(--red);
+    border-color: #f87171;
+    box-shadow: 0 0 24px var(--red), 0 0 60px rgba(239,68,68,.4),
+      inset 0 1px 3px rgba(255,255,255,.3);
+  }
+  .led-orb.blink {
+    animation: blink-anim .6s ease-in-out infinite;
+    border-color: #fbbf24;
+  }
+  @keyframes blink-anim {
+    0%, 100% {
+      background: var(--red);
+      box-shadow: 0 0 24px var(--red), 0 0 60px rgba(239,68,68,.5),
+        inset 0 1px 3px rgba(255,255,255,.3);
+    }
+    50% {
+      background: #3a0a0a;
+      box-shadow: none;
+    }
+  }
+  .led-orb::after {
+    content: '';
+    position: absolute; top: 12%; left: 20%;
+    width: 35%; height: 35%;
+    background: rgba(255,255,255,.25);
+    border-radius: 50%;
+    filter: blur(3px);
+  }
+
+  .status-text { flex: 1; }
+  .status-label {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 2px;
+    color: var(--muted); text-transform: uppercase; margin-bottom: 6px;
+  }
+  #status-headline {
+    font-family: var(--mono); font-size: 26px; font-weight: 700;
+    line-height: 1.1;
+    transition: color .4s;
+  }
+  #status-detail {
+    font-size: 13px; color: var(--muted); margin-top: 6px;
+  }
+
+  .status-time {
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    text-align: right;
+  }
+  #last-update { display: block; margin-top: 4px; }
+
+  /* ── SENSOR CARDS ───────────────────────────────────── */
+  .cards {
+    display: flex; flex-direction: column; gap: 16px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    display: flex; flex-direction: column; gap: 8px;
+    transition: border-color .3s;
+  }
+  .card-header {
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .card-icon { font-size: 18px; }
+  .card-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 2px;
+    color: var(--muted); text-transform: uppercase;
+  }
+  .card-value {
+    font-family: var(--mono); font-size: 36px; font-weight: 700;
+    color: var(--ice); line-height: 1;
+  }
+  .card-value .unit {
+    font-size: 14px; color: var(--muted); margin-left: 4px;
+  }
+  .card-sub {
+    font-size: 12px; color: var(--muted);
+  }
+
+  /* Temperature bar */
+  .temp-bar-track {
+    height: 4px; background: var(--border); border-radius: 2px;
+    margin-top: 4px; overflow: hidden;
+  }
+  .temp-bar-fill {
+    height: 100%; border-radius: 2px;
+    background: var(--green);
+    transition: width .4s ease, background .4s;
+  }
+
+  /* Boolean badge */
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 999px;
+    font-family: var(--mono); font-size: 11px;
+    border: 1px solid;
+  }
+  .badge.on  { background: rgba(251,191,36,.08); color: var(--amber); border-color: rgba(251,191,36,.3); }
+  .badge.off { background: rgba(74,96,112,.08);  color: var(--muted); border-color: var(--border); }
+
+  /* ── EVENT LOG ──────────────────────────────────────── */
+  .log-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .log-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .log-title {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 2px;
+    color: var(--ice); text-transform: uppercase;
+  }
+  #log-count {
+    font-family: var(--mono); font-size: 10px;
+    background: var(--border); border-radius: 999px;
+    padding: 2px 8px; color: var(--muted);
+  }
+  #log-list {
+    flex: 1; overflow-y: auto; padding: 8px 0;
+    max-height: 340px;
+  }
+  #log-list::-webkit-scrollbar { width: 4px; }
+  #log-list::-webkit-scrollbar-track { background: transparent; }
+  #log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .log-entry {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 8px 20px;
+    border-bottom: 1px solid rgba(30,42,56,.5);
+    animation: slide-in .25s ease;
+  }
+  @keyframes slide-in {
+    from { opacity: 0; transform: translateX(-8px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  .log-time {
+    font-family: var(--mono); font-size: 10px;
+    color: var(--muted); flex-shrink: 0; padding-top: 1px;
+  }
+  .log-msg { font-size: 12px; color: var(--text); line-height: 1.4; }
+  .log-empty { padding: 32px 20px; text-align: center; color: var(--muted); font-size: 12px; }
+
+  /* ── RAW DATA ROW ───────────────────────────────────── */
+  .raw-panel {
+    grid-column: 1 / -1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 20px;
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+    flex-wrap: wrap;
+  }
+  .raw-label { color: var(--ice); margin-right: 2px; }
+  .raw-sep { color: var(--border); }
+  #raw-output { color: var(--text); }
+
+  /* ── FOOTER ─────────────────────────────────────────── */
+  footer {
+    position: relative; z-index: 1;
+    text-align: center; padding: 14px;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono); font-size: 10px;
+    color: var(--muted); letter-spacing: 1px;
+  }
+
+  /* ── RESPONSIVE ─────────────────────────────────────── */
+  @media (max-width: 768px) {
+    main { grid-template-columns: 1fr; padding: 16px; }
+    .status-hero { flex-direction: column; text-align: center; }
+    .status-time { text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ──────────────────────────────────────────── -->
+<header>
+  <div class="logo">
+    <span class="logo-icon">🧊</span>
+    <div>
+      <div class="logo-text">Fridge Friend</div>
+      <div class="logo-sub">Live Monitor · Raspberry Pi</div>
+    </div>
+  </div>
+  <div id="connection-pill">
+    <span class="pill-dot"></span>
+    <span id="conn-label">Connecting…</span>
+  </div>
+</header>
+
+<!-- ── MAIN ────────────────────────────────────────────── -->
+<main>
+
+  <!-- STATUS HERO -->
+  <div class="status-hero" id="status-hero">
+    <div class="led-orb" id="led-orb"></div>
+    <div class="status-text">
+      <div class="status-label">System Status</div>
+      <div id="status-headline">—</div>
+      <div id="status-detail">Waiting for data…</div>
+    </div>
+    <div class="status-time">
+      <div>Last update</div>
+      <span id="last-update">—</span>
+    </div>
+  </div>
+
+  <!-- SENSOR CARDS -->
+  <div class="cards">
+
+    <!-- TEMPERATURE -->
+    <div class="card" id="card-temp">
+      <div class="card-header">
+        <span class="card-icon">🌡️</span>
+        <span class="card-label">Temperature</span>
+      </div>
+      <div class="card-value">
+        <span id="val-temp">—</span><span class="unit">°F</span>
+      </div>
+      <div class="temp-bar-track">
+        <div class="temp-bar-fill" id="temp-bar" style="width:0%"></div>
+      </div>
+      <div class="card-sub" id="temp-note">Ideal range: 34 – 40 °F</div>
+    </div>
+
+    <!-- DISTANCE -->
+    <div class="card" id="card-dist">
+      <div class="card-header">
+        <span class="card-icon">📡</span>
+        <span class="card-label">Door Distance</span>
+      </div>
+      <div class="card-value">
+        <span id="val-dist">—</span><span class="unit">cm</span>
+      </div>
+      <div class="card-sub" id="dist-note">Closed = 0.5–1.0 cm from sensor</div>
+    </div>
+
+    <!-- LIGHT -->
+    <div class="card" id="card-light">
+      <div class="card-header">
+        <span class="card-icon">💡</span>
+        <span class="card-label">Interior Light</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
+        <span class="badge off" id="light-badge">
+          <span id="light-dot">●</span>
+          <span id="light-label">OFF</span>
+        </span>
+        <span class="card-sub" id="light-note">Door should be off when sealed</span>
+      </div>
+    </div>
+
+    <!-- DOOR STATE -->
+    <div class="card" id="card-door">
+      <div class="card-header">
+        <span class="card-icon">🚪</span>
+        <span class="card-label">Door State</span>
+      </div>
+      <div class="card-value" style="font-size:22px;" id="val-door">—</div>
+      <div class="card-sub" id="door-note">Derived from distance + light</div>
+    </div>
+
+  </div>
+
+  <!-- EVENT LOG -->
+  <div class="log-panel">
+    <div class="log-header">
+      <span class="log-title">Event Log</span>
+      <span id="log-count">0 events</span>
+    </div>
+    <div id="log-list">
+      <div class="log-empty">No events yet…</div>
+    </div>
+  </div>
+
+  <!-- RAW DATA -->
+  <div class="raw-panel">
+    <span class="raw-label">RAW →</span>
+    <span id="raw-output">Waiting for first packet…</span>
+  </div>
+
+</main>
+
+<footer>FRIDGE FRIEND · MAE4194/6194 &amp; IoT · Claudia S. Rodriguez Chevere</footer>
+
+<!-- ── SCRIPT ───────────────────────────────────────────── -->
+<script>
+  const API = 'http://localhost:5000/data'; // Change to Pi's IP if accessing remotely
+  const POLL_MS = 300;
+
+  // ── DOM REFS ──────────────────────────────────
+  const pill       = document.getElementById('connection-pill');
+  const connLabel  = document.getElementById('conn-label');
+  const hero       = document.getElementById('status-hero');
+  const ledOrb     = document.getElementById('led-orb');
+  const headline   = document.getElementById('status-headline');
+  const detail     = document.getElementById('status-detail');
+  const lastUpdate = document.getElementById('last-update');
+  const valTemp    = document.getElementById('val-temp');
+  const tempBar    = document.getElementById('temp-bar');
+  const tempNote   = document.getElementById('temp-note');
+  const valDist    = document.getElementById('val-dist');
+  const distNote   = document.getElementById('dist-note');
+  const lightBadge = document.getElementById('light-badge');
+  const lightLabel = document.getElementById('light-label');
+  const lightNote  = document.getElementById('light-note');
+  const valDoor    = document.getElementById('val-door');
+  const doorNote   = document.getElementById('door-note');
+  const logList    = document.getElementById('log-list');
+  const logCount   = document.getElementById('log-count');
+  const rawOutput  = document.getElementById('raw-output');
+
+  let lastLogLength = 0;
+
+  // ── STATUS CONFIG ──────────────────────────────
+  const STATUS_MAP = {
+    closed_ok: {
+      headline: 'All Good',
+      detail: 'Door sealed · Temperature in range · Light off',
+      led: 'green',
+      heroClass: 'state-green',
+      color: 'var(--green)',
+      doorLabel: '✅ Properly Closed',
+    },
+    open: {
+      headline: 'Door Open',
+      detail: 'Light detected and door is away from sensor',
+      led: 'red',
+      heroClass: 'state-red',
+      color: 'var(--red)',
+      doorLabel: '🚪 Open',
+    },
+    bad_seal: {
+      headline: 'Bad Seal',
+      detail: 'Door appears closed but interior light is still on',
+      led: 'red',
+      heroClass: 'state-red',
+      color: 'var(--red)',
+      doorLabel: '⚠️ Incorrectly Closed',
+    },
+    unknown: {
+      headline: 'Uncertain',
+      detail: 'Sensor readings are ambiguous',
+      led: 'red',
+      heroClass: 'state-red',
+      color: 'var(--red)',
+      doorLabel: '❓ Unknown',
+    },
+  };
+
+  // ── UPDATE UI ──────────────────────────────────
+  function applyData(d) {
+    const now = new Date();
+    lastUpdate.textContent = now.toLocaleTimeString();
+
+    // Determine if temp alert overrides status
+    const isTempAlert = d.temp_f > 40;
+    const status = isTempAlert ? '__temp_alert' : d.door_status;
+
+    // Hero + LED
+    hero.className = 'status-hero';
+    ledOrb.className = 'led-orb';
+
+    if (isTempAlert) {
+      headline.textContent = 'TEMP ALERT';
+      headline.style.color = 'var(--amber)';
+      detail.textContent   = `Temperature ${d.temp_f.toFixed(1)}°F exceeds 40°F threshold`;
+      hero.classList.add('state-blink');
+      ledOrb.classList.add('blink');
+    } else {
+      const cfg = STATUS_MAP[d.door_status] || STATUS_MAP.unknown;
+      headline.textContent = cfg.headline;
+      headline.style.color = cfg.color;
+      detail.textContent   = cfg.detail;
+      hero.classList.add(cfg.heroClass);
+      ledOrb.classList.add(cfg.led);
+    }
+
+    // Temperature card
+    valTemp.textContent = d.temp_f.toFixed(1);
+    const clampedT = Math.max(28, Math.min(50, d.temp_f));
+    const pct = ((clampedT - 28) / (50 - 28)) * 100;
+    tempBar.style.width = pct + '%';
+    if (d.temp_f > 40) {
+      tempBar.style.background = 'var(--red)';
+      tempNote.textContent = '⚠️ Above safe range (34–40°F)';
+      tempNote.style.color = 'var(--red)';
+    } else if (d.temp_f < 34) {
+      tempBar.style.background = 'var(--ice)';
+      tempNote.textContent = '❄️ Below ideal range (34–40°F)';
+      tempNote.style.color = 'var(--ice)';
+    } else {
+      tempBar.style.background = 'var(--green)';
+      tempNote.textContent = '✅ Within safe range (34–40°F)';
+      tempNote.style.color = 'var(--green)';
+    }
+
+    // Distance card
+    valDist.textContent = d.distance_cm.toFixed(2);
+    const closed = d.distance_cm >= 0.5 && d.distance_cm <= 1.0;
+    distNote.textContent = closed
+      ? '✅ Within closed range (0.5–1.0 cm)'
+      : d.distance_cm < 0.5
+        ? '⚠️ Too close — check sensor'
+        : '🚪 Door is open / ajar';
+    distNote.style.color = closed ? 'var(--green)' : d.distance_cm > 1.0 ? 'var(--red)' : 'var(--amber)';
+
+    // Light card
+    if (d.light_on) {
+      lightBadge.className = 'badge on';
+      lightLabel.textContent = 'ON';
+      lightNote.textContent = '⚠️ Light detected inside fridge';
+      lightNote.style.color = 'var(--amber)';
+    } else {
+      lightBadge.className = 'badge off';
+      lightLabel.textContent = 'OFF';
+      lightNote.textContent = '✅ No light — door sealed';
+      lightNote.style.color = 'var(--green)';
+    }
+
+    // Door card
+    const cfg = STATUS_MAP[d.door_status] || STATUS_MAP.unknown;
+    valDoor.textContent = cfg ? cfg.doorLabel : d.door_status;
+
+    // Raw data
+    rawOutput.textContent =
+      `dist: ${d.distance_cm} cm  |  temp: ${d.temp_f} °F  |  light: ${d.light_on}  |  door: ${d.door_status}  |  led: ${d.led_status}`;
+
+    // Log
+    if (d.log && d.log.length !== lastLogLength) {
+      renderLog(d.log);
+      lastLogLength = d.log.length;
+    }
+  }
+
+  function renderLog(entries) {
+    if (!entries.length) {
+      logList.innerHTML = '<div class="log-empty">No events yet…</div>';
+      logCount.textContent = '0 events';
+      return;
+    }
+    logCount.textContent = `${entries.length} event${entries.length !== 1 ? 's' : ''}`;
+    logList.innerHTML = entries.map(e => `
+      <div class="log-entry">
+        <span class="log-time">${e.time}</span>
+        <span class="log-msg">${e.msg}</span>
+      </div>
+    `).join('');
+  }
+
+  // ── FETCH LOOP ─────────────────────────────────
+  let errorCount = 0;
+
+  async function poll() {
+    try {
+      const res = await fetch(API, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      errorCount = 0;
+      pill.className = 'connected';
+      pill.querySelector('#conn-label').textContent = 'Live';
+      // Update connection indicator element id
+      connLabel.textContent = 'Live';
+
+      applyData(data);
+    } catch (err) {
+      errorCount++;
+      pill.className = 'error';
+      connLabel.textContent = errorCount > 3 ? 'Connection lost' : 'Retrying…';
+      console.warn('Poll error:', err.message);
+    }
+  }
+
+  // Start polling
+  poll();
+  setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>
